@@ -1,0 +1,16 @@
+name: abeta42
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.10
+  - numpy
+  - scipy
+  - matplotlib
+  - seaborn
+  - pip
+  - pip:
+      - pyemma
+      - deeptime
+      - mdanalysis
+      - mdtraj
