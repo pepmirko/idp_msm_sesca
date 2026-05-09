@@ -13,7 +13,7 @@ End-to-end pipeline for building a Markov State Model from multiple MD trajector
 - Tau(272-314) — microtubule-binding repeat region
 - CB01, CB02, CB03, VW19 — see https://github.com/pepmirko/pdb_BScthesis
 
-The pipeline is **system-agnostic**: swap the `SYSTEMS` dict in each script to target any IDP.
+The pipeline is **system-agnostic**: set `ACTIVE_SYSTEM` in `config.py` to target any IDP.
 
 ---
 
@@ -29,13 +29,14 @@ The pipeline is **system-agnostic**: swap the `SYSTEMS` dict in each script to t
    - [Step 1 — Convergence check](#step-1--convergence-check)
    - [Step 2 — Featurisation + TICA](#step-2--featurisation--tica)
    - [Step 3 — Clustering + MSM](#step-3--clustering--msm)
-   - [Step 4 — SESCA CD forward modelling](#step-4--sesca-cd-forward-modelling)
-   - [Step 5 — Representative structures](#step-5--representative-structures)
+   - [Step 4 — Representative structures](#step-4--representative-structures)
+   - [Step 5 — SESCA CD forward modelling](#step-5--sesca-cd-forward-modelling)
 7. [Adapting to a new system](#adapting-to-a-new-system)
-8. [Outputs](#outputs)
-9. [Troubleshooting](#troubleshooting)
-10. [References](#references)
-11. [Acknowledgements](#acknowledgements)
+8. [Configuration reference](#configuration-reference-configpy)
+9. [Outputs](#outputs)
+10. [Troubleshooting](#troubleshooting)
+11. [References](#references)
+12. [Acknowledgements](#acknowledgements)
 
 ---
 
@@ -57,6 +58,7 @@ This approach mirrors the ensemble-first strategy validated on α-helical model 
 idp_msm_sesca/
 │
 ├── README.md
+├── config.py                  # ← single file for all system parameters
 ├── environment.yml            # conda environment
 ├── .gitignore
 │
@@ -65,8 +67,8 @@ idp_msm_sesca/
 │   ├── 01_convergence.py      # Joint PCA + cosine content
 │   ├── 02_tica.py             # Featurisation (Cα distances) + TICA lagtime scan
 │   ├── 03_msm.py              # k-means clustering + Bayesian MSM + PCCA+
-│   ├── 04_sesca.py            # CD forward modelling + D-SPR
-│   └── 05_representatives.py  # Centroid extraction + PDB output
+│   ├── 04_representatives.py  # Centroid extraction + PDB output
+│   └── 05_sesca.py            # CD forward modelling + D-SPR
 │
 ├── data/
 │   ├── README_data.md         # instructions for placing input files
@@ -185,10 +187,11 @@ trajs/*.xtc  (plain MD or REST2 target replica)
 [03] Clustering + MSM ────── k-means (√N heuristic), Bayesian MSM,
      │                       Chapman-Kolmogorov test, PCCA+ macrostates
      ▼
-[04] SESCA CD ────────────── Per-macrostate CD prediction,
-     │                       population-weighted ensemble spectrum, D-SPR
+[04] Representatives ──────── Centroid PDB for each macrostate
+     │
      ▼
-[05] Representatives ──────── Centroid PDB for each macrostate
+[05] SESCA CD ────────────── Per-macrostate CD prediction,
+                             population-weighted ensemble spectrum, D-SPR
 ```
 
 ---
@@ -247,7 +250,7 @@ Featurises as pairwise Cα distances (`excluded_neighbors=2`), scans TICA lagtim
 python scripts/02_tica.py
 ```
 
-Inspect `analysis/plots/its_tica.png` and set `LAG_TICA_FINAL` to the smallest lagtime at which the top ITS plateau. Typical values:
+Inspect `analysis/plots/its_tica.png` and set `LAG_TICA` in `config.py` to the smallest lagtime at which the top ITS plateau. Typical values:
 
 | System | Suggested lagtime range |
 |---|---|
@@ -268,9 +271,9 @@ k-means → ITS scan → Bayesian MSM (200 samples) → Chapman-Kolmogorov test 
 python scripts/03_msm.py
 ```
 
-**Parameters to set** (top of script):
+All tunable parameters are in `config.py`:
 ```python
-LAG_TICA = 100   # from Step 2
+LAG_TICA = 100   # from Step 2 ITS plot
 LAG_MSM  = 20    # from ITS MSM plateau
 N_MACRO  = 5     # reduce to 3 if CK test fails
 ```
@@ -281,13 +284,28 @@ CK test: dashed (predicted) and solid (re-estimated) lines must overlap within e
 
 ---
 
-### Step 4 — SESCA CD forward modelling
+### Step 4 — Representative structures
 
-**Script:** `scripts/04_sesca.py`
+**Script:** `scripts/04_representatives.py`
 
-Run SESCA externally on each representative PDB (produced by Step 5), then:
+Finds the frame closest to the TICA-space centroid for each macrostate and writes one PDB per macrostate.
 
 ```bash
+python scripts/04_representatives.py
+```
+
+**Output:** `analysis/representatives/macro_N.pdb`, `analysis/representatives/summary.txt`
+
+---
+
+### Step 5 — SESCA CD forward modelling
+
+**Script:** `scripts/05_sesca.py`
+
+Run SESCA externally on each representative PDB (output of Step 4), then run the script:
+
+```bash
+mkdir -p analysis/sesca
 for i in 0 1 2 3 4; do
     python /path/to/sesca_main.py \
         -pdb analysis/representatives/macro_${i}.pdb \
@@ -295,7 +313,7 @@ for i in 0 1 2 3 4; do
         -output analysis/sesca/macro_${i}_cd.dat
 done
 
-python scripts/04_sesca.py
+python scripts/05_sesca.py
 ```
 
 **D-SPR interpretation:**
@@ -311,44 +329,54 @@ python scripts/04_sesca.py
 
 ---
 
-### Step 5 — Representative structures
+## Adapting to a new system
 
-**Script:** `scripts/05_representatives.py`
+All system-specific configuration lives in `config.py`. To run on a new IDP:
 
-Finds the frame closest to the TICA-space centroid for each macrostate and writes one PDB per macrostate.
-
-```bash
-python scripts/05_representatives.py
+**1.** Set `ACTIVE_SYSTEM` in `config.py`:
+```python
+ACTIVE_SYSTEM = "tau"   # or "abeta42", "abeta40", "custom"
 ```
 
-**Output:** `analysis/representatives/macro_N.pdb`, `analysis/representatives/summary.txt`
+**2.** If adding a new system, define it in the `_SYSTEMS` dict inside `config.py`:
+```python
+"my_idp": {
+    "systems": {
+        "seed_a": ("trajs/seed_a.pdb", "trajs/seed_a.xtc"),
+        "seed_b": ("trajs/seed_b.pdb", "trajs/seed_b.xtc"),
+    },
+    "ref_top":     "trajs/seed_a.pdb",
+    "exp_cd_path": "data/my_idp_cd_exp.dat",
+    "lag_tica":    100,
+    "lag_msm":     20,
+    "n_macro":     5,
+    "dt_traj":     "0.1 ns",
+},
+```
+
+**3.** Re-tune `lag_tica`, `lag_msm`, `n_macro` from the ITS plots — do not reuse values from a different system.
+
+**4.** Run from Step 0. No script internals need to be edited.
+
+Verify the active configuration at any time:
+```bash
+python config.py
+```
 
 ---
 
-## Adapting to a new system
+## Configuration reference (`config.py`)
 
-All system-specific configuration lives in the `SYSTEMS` dict at the top of each script. To run on a new IDP:
+All pipeline parameters live in a single file at the repo root. Scripts import from it.
 
-**1.** Edit `SYSTEMS` in every script:
-```python
-# Tau(272-314) example
-SYSTEMS = {
-    "tau_ext":   ("trajs/tau_ext.pdb",   "trajs/tau_ext.xtc"),
-    "tau_helix": ("trajs/tau_helix.pdb", "trajs/tau_helix.xtc"),
-    "tau_nmr":   ("trajs/tau_nmr.pdb",   "trajs/tau_nmr.xtc"),
-}
-```
-
-**2.** Update `EXP_DATA_PATH` in `04_sesca.py`:
-```python
-EXP_DATA_PATH = "data/tau_cd_exp.dat"
-```
-
-**3.** Re-tune `LAG_TICA_FINAL`, `LAG_MSM`, `N_MACRO` from the ITS plots — do not reuse values from a different system.
-
-**4.** Run from Step 0.
-
-Nothing else needs to change.
+| Parameter | Description | Tune from |
+|---|---|---|
+| `ACTIVE_SYSTEM` | Which system block to use | — |
+| `LAG_TICA` | TICA lagtime (frames) | `its_tica.png` plateau |
+| `LAG_MSM` | MSM lagtime (frames) | `its_msm.png` plateau |
+| `N_MACRO` | PCCA+ macrostates | CK test quality |
+| `DT_TRAJ` | Saving stride (e.g. `"0.1 ns"`) | Your GROMACS setup |
+| `EXP_CD` | Path to experimental CD file | — |
 
 ---
 
@@ -377,7 +405,7 @@ Nothing else needs to change.
 → Increase `N_CLUSTERS` or decrease `LAG_MSM`. Check `active_count_fraction > 0.90`.
 
 **CK test fails visually**  
-→ Reduce `N_MACRO` to 3, or increase `LAG_MSM`.
+→ Reduce `N_MACRO` to 3, or increase `LAG_MSM` in `config.py`.
 
 **SESCA gives flat/zero spectrum**  
 → PDB must contain full backbone atoms (N, Cα, C, O) as ATOM records. No HETATM, no missing residues.
@@ -408,4 +436,5 @@ Nothing else needs to change.
 ## Acknowledgements
 
 We sincerely thank **CINECA and the Italian SuperComputing Resource Allocation (ISCRA) program** for making this work computationally feasible. The scale of enhanced-sampling simulations required by this pipeline — 16-replica REST2 runs at 500 ns/replica for multiple Aβ variants — would not have been achievable without access to leadership-class HPC infrastructure. The availability of LEONARDO BOOSTER has been decisive in enabling a rigorous, ensemble-first characterisation of the Aβ(1-40)/(1-42) conformational landscape.
+
 
