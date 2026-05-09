@@ -1,4 +1,4 @@
-name: abeta42
+name: idp_msm_sesca
 channels:
   - conda-forge
   - defaults
